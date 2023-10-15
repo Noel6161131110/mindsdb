@@ -1,7 +1,6 @@
 from copy import deepcopy
 
 from mindsdb_sql import parse_sql
-from mindsdb_sql.render.sqlalchemy_render import SqlalchemyRender
 from mindsdb_sql.parser.ast import (
     BinaryOperation,
     Identifier,
@@ -12,6 +11,7 @@ from mindsdb.api.mysql.mysql_proxy.datahub.datanodes.datanode import DataNode
 from mindsdb.api.mysql.mysql_proxy.datahub.classes.tables_row import TablesRow
 from mindsdb.api.mysql.mysql_proxy.classes.sql_query import SQLQuery
 from mindsdb.api.mysql.mysql_proxy.utilities.sql import query_df
+from mindsdb.interfaces.query_context.context_controller import query_context_controller
 
 
 class ProjectDataNode(DataNode):
@@ -50,11 +50,13 @@ class ProjectDataNode(DataNode):
         return self.project.get_columns(table_name)
 
     def predict(self, model_name: str, data, version=None, params=None):
-        project_tables = self.project.get_tables()
-        predictor_table_meta = project_tables[model_name]
-        if predictor_table_meta['update_status'] == 'available':
+        model_metadata = self.project.get_model(model_name)
+        if model_metadata is None:
+            raise Exception(f"Can't find model '{model_name}'")
+        model_metadata = model_metadata['metadata']
+        if model_metadata['update_status'] == 'available':
             raise Exception(f"model '{model_name}' is obsolete and needs to be updated. Run 'RETRAIN {model_name};'")
-        handler = self.integration_controller.get_handler(predictor_table_meta['engine_name'])
+        handler = self.integration_controller.get_handler(model_metadata['engine_name'])
         return handler.predict(model_name, data, project_name=self.project.name, version=version, params=params)
 
     def query(self, query=None, native_query=None, session=None):
@@ -68,7 +70,7 @@ class ProjectDataNode(DataNode):
             query.from_table.parts[0] = 'models'
             query_table = 'models'
         # endregion
-        if query_table in ('models', 'models_versions', 'jobs', 'jobs_history'):
+        if query_table in ('models', 'models_versions', 'jobs', 'jobs_history', 'mdb_triggers', 'chatbots'):
             new_query = deepcopy(query)
             project_filter = BinaryOperation('=', args=[
                 Identifier('project'),
@@ -86,19 +88,22 @@ class ProjectDataNode(DataNode):
         # endregion
 
         # region query to views
-        view_query_ast = self.project.query_view(query)
+        view_meta = self.project.query_view(query)
 
-        renderer = SqlalchemyRender('mysql')
-        query_str = renderer.get_string(view_query_ast, with_failback=True)
+        query_context_controller.set_context('view', view_meta['id'])
 
-        sqlquery = SQLQuery(
-            query_str,
-            session=session
-        )
+        try:
+            sqlquery = SQLQuery(
+                view_meta['query_ast'],
+                session=session
+            )
+            result = sqlquery.fetch(view='dataframe')
 
-        result = sqlquery.fetch(view='dataframe')
+        finally:
+            query_context_controller.release_context('view', view_meta['id'])
+
         if result['success'] is False:
-            raise Exception(f'Cant execute view query: {query_str}')
+            raise Exception(f"Cant execute view query: {view_meta['query_ast']}")
         df = result['result']
 
         df = query_df(df, query)

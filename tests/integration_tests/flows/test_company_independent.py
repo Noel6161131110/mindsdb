@@ -1,17 +1,19 @@
 from pathlib import Path
 import json
 
-import requests
 import pytest
 
 from pymongo import MongoClient
 
 from mindsdb.api.mysql.mysql_proxy.libs.constants.response_type import RESPONSE_TYPE
 from .conftest import CONFIG_PATH
+from .http_test_helpers import HTTPHelperMixin
 
 # used by mindsdb_app fixture in conftest
 OVERRIDE_CONFIG = {
     'integrations': {},
+    'tasks': {'disable': True},
+    'jobs': {'disable': True}
 }
 
 # used by (required for) mindsdb_app fixture in conftest
@@ -26,8 +28,8 @@ def get_string_params(parameters):
     return ', '.join([f'{key} = {json.dumps(val)}' for key, val in parameters.items()])
 
 
-@pytest.mark.usefixtures("mindsdb_app")
-class TestCompanyIndependent:
+@pytest.mark.usefixtures('mindsdb_app', 'postgres_db')
+class TestCompanyIndependent(HTTPHelperMixin):
     @classmethod
     def setup_class(cls):
         CONFIG.update(
@@ -66,41 +68,6 @@ class TestCompanyIndependent:
         assert len(a) == len(b)
         assert a == b
 
-    def sql_via_http(self, request: str, expected_resp_type: str = None, context: dict = None,
-                     headers: dict = None, company_id: int = None) -> dict:
-        if context is None:
-            context = {}
-
-        if headers is None:
-            headers = {}
-        if company_id is not None:
-            headers['company-id'] = str(company_id)
-
-        root = 'http://127.0.0.1:47334/api'
-        response = requests.post(
-            f'{root}/sql/query',
-            json={
-                'query': request,
-                'context': context
-            },
-            headers=headers
-        )
-        assert response.status_code == 200
-        response = response.json()
-        if expected_resp_type is not None:
-            assert response.get('type') == expected_resp_type
-        else:
-            assert response.get('type') in [RESPONSE_TYPE.OK, RESPONSE_TYPE.TABLE, RESPONSE_TYPE.ERROR]
-        assert isinstance(response.get('context'), dict)
-        if response['type'] == 'table':
-            assert isinstance(response.get('data'), list)
-            assert isinstance(response.get('column_names'), list)
-        elif response['type'] == 'error':
-            assert isinstance(response.get('error_code'), int)
-            assert isinstance(response.get('error_message'), str)
-        self._sql_via_http_context = response['context']
-        return response
-
     def test_initial_state_http(self):
         # add permanent integrations
         for cid in [CID_A, CID_B]:
@@ -132,11 +99,11 @@ class TestCompanyIndependent:
                 }
             )
 
-    def test_add_data_db_http(self, postgres_db):
+    def test_add_data_db_http(self):
 
         # region create data db
-        test_integration_data = postgres_db["connection_data"]
-        test_integration_engine = postgres_db['type']
+        test_integration_data = self.postgres_db["connection_data"]
+        test_integration_engine = self.postgres_db['type']
 
         self.sql_via_http(
             f"""
@@ -263,7 +230,9 @@ class TestCompanyIndependent:
                     'jobs',
                     'jobs_history',
                     'models',
-                    'models_versions'
+                    'models_versions',
+                    'mdb_triggers',
+                    'chatbots',
                 }
             )
         # endregion
@@ -302,7 +271,7 @@ class TestCompanyIndependent:
                 }
             )
 
-    def test_views(self, postgres_db):
+    def test_views(self):
 
         query = """
             CREATE VIEW mindsdb.{}
@@ -325,6 +294,8 @@ class TestCompanyIndependent:
                     'jobs_history',
                     'models',
                     'models_versions',
+                    'mdb_triggers',
+                    'chatbots',
                     f'test_view_{char}'
                 }
             )
@@ -349,7 +320,9 @@ class TestCompanyIndependent:
                     'jobs',
                     'jobs_history',
                     'models',
-                    'models_versions'
+                    'models_versions',
+                    'mdb_triggers',
+                    'chatbots',
                 }
             )
 
@@ -359,7 +332,7 @@ class TestCompanyIndependent:
                 expected_resp_type=RESPONSE_TYPE.ERROR
             )
 
-    def test_model(self, postgres_db):
+    def test_model(self):
         query = """
             CREATE MODEL mindsdb.model_{}
             FROM test_integration_{} (
@@ -385,7 +358,7 @@ class TestCompanyIndependent:
             )
             assert len(response['data']), 1
 
-    def test_6_mongo(self, postgres_db):
+    def test_6_mongo(self):
 
         client_a = MongoClient(host='127.0.0.1', port=int(CONFIG['api']['mongodb']['port']))
         client_a.admin.command({'company_id': CID_A, 'need_response': 1})
@@ -425,6 +398,8 @@ class TestCompanyIndependent:
             'jobs_history',
             'models',
             'models_versions',
+            'mdb_triggers',
+            'chatbots',
             'test_mon_p_a',
             'model_a'
         })
@@ -434,5 +409,7 @@ class TestCompanyIndependent:
             'jobs_history',
             'models',
             'models_versions',
+            'mdb_triggers',
+            'chatbots',
             'model_b'
         })

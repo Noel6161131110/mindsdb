@@ -17,10 +17,10 @@ GitHub handler for MindsDB provides interfaces to connect to GitHub via APIs and
 
 ---
 
-## About GithHub
+## About GitHub
 
 GitHub is a web-based hosting service for version control using Git. It is mostly used for computer code.
-It offers all of the distributed version control and source code management (SCM) functionality
+It offers all the distributed version control and source code management (SCM) functionality
 of Git as well as adding its own features. It provides access control and several collaboration
 features such as bug tracking, feature requests, task management, and wikis for every project.
 
@@ -49,14 +49,12 @@ Read about creating a GitHub API key [here](https://docs.github.com/en/github/au
     - [x] Support column selection
   - [x] Support INSERT
     - [x] Support title, body, assignee, milestone, and labels columns
-
-## TODO
-
-- [ ] GitHub Pull Requests Table for a given Repository
-- [ ] GitHub Commits Table for a given Repository
-- [ ] GitHub Releases Table for a given Repository
-- [ ] GitHub Contributors Table for a given Repository
-- [ ] GitHub Branches Table for a given Repository
+- [x] GitHub Pull Requests Table for a given Repository
+  - [x] Support SELECT
+    - [x] Support LIMIT
+    - [x] Support WHERE
+    - [x] Support ORDER BY
+    - [x] Support column selection
 
 ## Example Usage
 
@@ -68,7 +66,7 @@ CREATE DATABASE mindsdb_github
 WITH ENGINE = 'github',
 PARAMETERS = {
   "repository": "mindsdb/mindsdb",
-  "api_key": "your_api_key",    -- optional GitHub API key
+  "api_key": "your_api_key"    -- optional GitHub API key
 };
 ~~~~
 
@@ -76,6 +74,14 @@ Use the established connection to query your database:
 
 ~~~~sql
 SELECT * FROM mindsdb_github.issues
+~~~~
+
+~~~~sql
+SELECT * FROM mindsdb_github.branches
+~~~~
+
+~~~~sql
+SELECT * FROM mindsdb_github.contributors
 ~~~~
 
 Run more advanced queries:
@@ -87,3 +93,13 @@ SELECT number, state, creator, assignee, title, labels
   ORDER BY created ASC, creator DESC
   LIMIT 10
 ~~~~
+
+~~~~sql
+SELECT number, state, title, creator, head, commits
+  FROM mindsdb_github.pull_requests
+  WHERE state="all"
+  ORDER BY long_running DESC, commits DESC
+  LIMIT 10
+~~~~
+
+

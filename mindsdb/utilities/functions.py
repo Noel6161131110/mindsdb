@@ -1,11 +1,16 @@
 import argparse
 import datetime
 from functools import wraps
+import hashlib
+import base64
+from cryptography.fernet import Fernet
+from collections.abc import Callable
 
 import requests
 from mindsdb_sql import get_lexer_parser
+from mindsdb_sql.parser.ast import Identifier
 
-from mindsdb.utilities.fs import create_process_mark, delete_process_mark
+from mindsdb.utilities.fs import create_process_mark, delete_process_mark, set_process_mark
 
 
 def args_parse():
@@ -16,7 +21,7 @@ def args_parse():
     parser.add_argument('--verbose', action='store_true')
     parser.add_argument('--no_studio', action='store_true')
     parser.add_argument('-v', '--version', action='store_true')
-    parser.add_argument('--ray', action='store_true', default=None)
+    parser.add_argument('--ml_task_queue_consumer', action='store_true', default=None)
     return parser.parse_args()
 
 
@@ -50,11 +55,15 @@ def is_notebook():
         return False      # Probably standard Python interpreter
 
 
-def mark_process(name):
-    def mark_process_wrapper(func):
+def mark_process(name: str, custom_mark: str = None) -> Callable:
+    def mark_process_wrapper(func: Callable) -> Callable:
         @wraps(func)
         def wrapper(*args, **kwargs):
-            mark = create_process_mark(name)
+            if custom_mark is None:
+                mark = create_process_mark(name)
+            else:
+                mark = set_process_mark(name, custom_mark)
+
             try:
                 return func(*args, **kwargs)
             finally:
@@ -101,3 +110,73 @@ def get_versions_where_predictors_become_obsolete():
 def init_lexer_parsers():
     get_lexer_parser('mindsdb')
     get_lexer_parser('mysql')
+
+
+def resolve_model_identifier(name: Identifier) -> tuple:
+    """ split model name to parts
+
+        Examples:
+            >>> resolve_model_identifier(['a', 'b'])
+            ('a', 'b', None)
+
+            >>> resolve_model_identifier(['a', '1'])
+            (None, 'a', 1)
+
+            >>> resolve_model_identifier(['a'])
+            (None, 'a', None)
+
+            >>> resolve_model_identifier(['a', 'b', 'c'])
+            (None, None, None)  # not found
+
+        Args:
+            name (list): Identifier parts
+
+        Returns:
+            tuple: (database_name, model_name, model_version, describe)
+    """
+    name = name.parts
+    database_name = None
+    model_name = None
+    model_version = None
+    parts_count = len(name)
+    if parts_count == 1:
+        database_name = None
+        model_name = name[0]
+        model_version = None
+    elif parts_count == 2:
+        if name[-1].isdigit():
+            database_name = None
+            model_name = name[0]
+            model_version = int(name[-1])
+        else:
+            database_name = name[0]
+            model_name = name[1]
+            model_version = None
+    elif parts_count == 3:
+        database_name = name[0]
+        model_name = name[1]
+        if name[2].isdigit():
+            model_version = int(name[2])
+        else:
+            # not found
+            return None, None, None
+
+    return database_name, model_name, model_version
+
+
+def encrypt(string: bytes, key: str) -> bytes:
+    hashed_string = hashlib.sha256(key.encode()).digest()
+
+    fernet_key = base64.urlsafe_b64encode(hashed_string)
+
+    cipher = Fernet(fernet_key)
+    return cipher.encrypt(string)
+
+
+def decrypt(encripted: bytes, key: str) -> bytes:
+    hashed_string = hashlib.sha256(key.encode()).digest()
+
+    fernet_key = base64.urlsafe_b64encode(hashed_string)
+
+    cipher = Fernet(fernet_key)
+    return cipher.decrypt(encripted)

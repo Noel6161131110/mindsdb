@@ -1,5 +1,6 @@
 from mindsdb.interfaces.storage import db
 from mindsdb.utilities.context import context as ctx
+from mindsdb.interfaces.query_context.context_controller import query_context_controller
 
 
 class ViewController:
@@ -65,8 +66,11 @@ class ViewController:
         db.session.delete(rec)
         db.session.commit()
 
+        query_context_controller.drop_query_context('view', rec.id)
+
     def _get_view_record_data(self, record):
         return {
+            'id': record.id,
             'name': record.name,
             'query': record.query
         }
@@ -90,7 +94,9 @@ class ViewController:
                 company_id=ctx.company_id
             ).all()
         if len(records) == 0:
-            raise Exception(f"Can't find view with name/id: {name}/{id}")
+            if name is None:
+                name = f'id={id}'
+            raise Exception(f"Can't find view '{name}' in project '{project_name}'")
         elif len(records) > 1:
             raise Exception(f"There are multiple views with name/id: {name}/{id}")
         record = records[0]
